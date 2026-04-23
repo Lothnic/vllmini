@@ -21,7 +21,20 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
     with open(config_path, "r") as f:
         hf = json.load(f)
 
-    config = LlamaConfig(**hf)
+    config = LlamaConfig(
+        vocab_size=hf["vocab_size"],
+        hidden_size=hf["hidden_size"],
+        num_hidden_layers=hf["num_hidden_layers"],
+        num_attention_heads=hf["num_attention_heads"],
+        num_key_value_heads=hf.get("num_key_value_heads", hf["num_attention_heads"]),
+        intermediate_size=hf["intermediate_size"],
+        max_position_embeddings=hf.get("max_position_embeddings", 2048),
+        rms_norm_eps=hf.get("rms_norm_eps", 1e-6),
+        rope_theta=hf.get("rope_theta", 10000.0),
+        attention_bias=hf.get("attention_bias", False),
+        tie_word_embeddings=hf.get("tie_word_embeddings", False),
+    )
+
     model = LlamaForCausalLM(config).to(device, dtype=dtype)
 
     # Load weights
@@ -56,7 +69,7 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     model.eval()
     del state_dict,mapped
-    torch.cude.empty_cache()
+    torch.cuda.empty_cache()
     return model, config
 
     

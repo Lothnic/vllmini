@@ -33,7 +33,7 @@ class Sampler:
         remove[..., 0] = False  # Always keep at least one
         
         # Scatter back to original order
-        remove = remove.scatter(1, sorted_indices, remove)
+        remove = remove.scatter(-1, sorted_indices, remove)
         return logits.masked_fill(remove, float("-inf"))
 
     def sample(self, logits: torch.Tensor) -> torch.Tensor:

@@ -19,7 +19,7 @@ class Generator:
             else:
                 logits, past_key_values = self.model(input_ids[:, -1:], position_ids=None, past_key_values=past_key_values)
 
-            next_token = self.sampler.sample(logits)
+            next_token = self.sampler.sample(logits[:,-1,:])
             input_ids = torch.cat([input_ids, next_token], dim=-1)
 
             if next_token.item() == self.tokenizer.eos_token_id:

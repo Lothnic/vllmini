@@ -21,7 +21,9 @@ class LlamaConfig:
     attention_bias: bool = False
     tie_word_embeddings: bool = False
     head_dim: int | None = None
-
+    dtype: torch.dtype = torch.bfloat16
+    device: str = "cuda"
+    
     def __post_init__(self):
         if self.head_dim is None:
             self.head_dim = self.hidden_size // self.num_attention_heads
