@@ -30,10 +30,12 @@ class Sampler:
         
         # Mark tokens to remove
         remove = cumsum > p
-        remove[..., 0] = False  # Always keep at least one
+        # Shift to the right to keep the first token that crosses the threshold
+        remove[..., 1:] = remove[..., :-1].clone()
+        remove[..., 0] = False
         
         # Scatter back to original order
-        remove = remove.scatter(-1, sorted_indices, remove)
+        remove = torch.zeros_like(remove).scatter(-1, sorted_indices, remove)
         return logits.masked_fill(remove, float("-inf"))
 
     def sample(self, logits: torch.Tensor) -> torch.Tensor:
