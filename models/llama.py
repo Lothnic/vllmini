@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from models.base import CausalLM
+from models.base import CausalLM, get_linear_layer
 
 
 @dataclass
@@ -23,6 +23,7 @@ class LlamaConfig:
     head_dim: int | None = None
     dtype: torch.dtype = torch.bfloat16
     device: str = "cuda"
+    quantize: bool = False
     
     def __post_init__(self):
         if self.head_dim is None:
@@ -74,10 +75,10 @@ class Attention(nn.Module):
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.q_proj = get_linear_layer(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.k_proj = get_linear_layer(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.v_proj = get_linear_layer(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.o_proj = get_linear_layer(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias, quantize=config.quantize)
         self.rotary_emb = rotary_emb
 
     def forward(self, hidden_states, past_kv=None, position_ids=None):
@@ -117,9 +118,9 @@ class Attention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+        self.gate_proj = get_linear_layer(config.hidden_size, config.intermediate_size, bias=False, quantize=config.quantize)
+        self.up_proj = get_linear_layer(config.hidden_size, config.intermediate_size, bias=False, quantize=config.quantize)
+        self.down_proj = get_linear_layer(config.intermediate_size, config.hidden_size, bias=False, quantize=config.quantize)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))

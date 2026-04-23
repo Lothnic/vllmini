@@ -7,13 +7,11 @@ from engine.sampler import Sampler
 
 # CONFIG
 HIDE_THINKING = False
+QUANTIZE = True
 
-# MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
-# MODEL_ID = "Qwen/Qwen3-0.6B"
-MODEL_ID = "Qwen/Qwen3-1.7B"
+MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
 
 def strip_thinking(output: str) -> str:
     if '</think>' in output:
@@ -23,7 +21,7 @@ def strip_thinking(output: str) -> str:
         return output
 
 def main():
-    model, config = load_hf_model(MODEL_ID, device=DEVICE)
+    model, config = load_hf_model(MODEL_ID, device=DEVICE, quantize=QUANTIZE)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     chat = [{"role": "user", "content": "Write a very long story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)

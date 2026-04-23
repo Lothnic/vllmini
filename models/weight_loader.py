@@ -1,10 +1,12 @@
 from safetensors import torch
 import json
 import torch
+import torch.nn as nn
 from safetensors.torch import load_file
 from models.llama import LlamaConfig, LlamaForCausalLM
 from models.qwen3 import QwenForCausalLM
 from huggingface_hub import hf_hub_download
+import gc
 
 # REGISTRY
 
@@ -16,8 +18,8 @@ MODEL_REGISTRY = {
         "qwen3": QwenForCausalLM,
     }
 
-def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16):
-    print(f"Loading model {model_id} to {device} with dtype {dtype}")
+def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16, quantize: bool = False):
+    print(f"Loading model {model_id} to {device} with dtype {dtype} (quantize={quantize})")
 
     config_path = hf_hub_download(repo_id=model_id, filename="config.json")
 
@@ -37,6 +39,7 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
         attention_bias=hf.get("attention_bias", False),
         tie_word_embeddings=hf.get("tie_word_embeddings", False),
         head_dim=hf.get("head_dim"),
+        quantize=quantize,
     )
 
     print(hf['architectures'][0])
@@ -48,41 +51,72 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     model_class = MODEL_REGISTRY[model_type]
 
-    # Initialize model on meta device (no actual memory allocation)
+    # 1. Initialize model on meta device
     with torch.device("meta"):
         model = model_class(config)
 
-    # Load weights directly to target device/dtype to avoid CPU copies
+    # 2. Find shard files
     try:
-        weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors")
-        state_dict = load_file(weights_path, device=device)
+        # Check for single file
+        shard_paths = [hf_hub_download(repo_id=model_id, filename="model.safetensors")]
     except Exception:
-        index_path = hf_hub_download(repo_id = model_id, filename="model.safetensors.index.json")
+        # Multi-shard model
+        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json")
         with open(index_path, "r") as f:
             index = json.load(f)
-        state_dict = {}
-        for shard in set(index["weight_map"].values()):
-            state_dict.update(load_file(hf_hub_download(repo_id=model_id, filename=shard), device=device))
+        shard_files = set(index["weight_map"].values())
+        shard_paths = [hf_hub_download(repo_id=model_id, filename=f) for f in shard_files]
+
+    # 3. Load shards one by one
+    for path in shard_paths:
+        shard = load_file(path, device="cpu")
+        for k, v in shard.items():
+            new_k = k
+            if new_k.startswith("model."):
+                new_k = new_k[6:]
+            new_k = new_k.replace("self_attn.", "attn.")
+            new_k = new_k.replace("input_layernorm", "input_norm")
+            new_k = new_k.replace("post_attention_layernorm", "post_norm")
+            
+            # Find the parameter in the model
+            try:
+                # Use recursive getattr to find the parameter
+                target = model
+                target_name = new_k
+                if "." in new_k:
+                    parts = new_k.split(".")
+                    for part in parts[:-1]:
+                        target = getattr(target, part)
+                    target_name = parts[-1]
+                
+                param = getattr(target, target_name)
+                
+                # Prepare weight on CPU
+                v_cpu = v.to(dtype=dtype)
+                
+                if hasattr(param, "quant_type"):
+                    # For bitsandbytes 4-bit parameters
+                    from bitsandbytes.nn import Params4bit
+                    new_param = Params4bit(
+                        v_cpu, 
+                        requires_grad=False, 
+                        quant_type=getattr(param, "quant_type", "nf4")
+                    ).to(device)
+                    setattr(target, target_name, new_param)
+                else:
+                    # For normal parameters
+                    target.register_parameter(target_name, nn.Parameter(v_cpu.to(device), requires_grad=False))
+                
+            except AttributeError:
+                # Might be a buffer or something we handle later (like lm_head tying)
+                pass
         
-    # Map HF names -> our names
-    mapped = {}
-    for k,v in state_dict.items():
-        new_k = k
-        if new_k.startswith("model."):
-            new_k = new_k[6:]
-        new_k = new_k.replace("self_attn.", "attn.")
-        new_k = new_k.replace("input_layernorm", "input_norm")
-        new_k = new_k.replace("post_attention_layernorm", "post_norm")
-        mapped[new_k] = v.to(dtype)
+        del shard
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
 
-    del state_dict
-
-    # assign=True replaces meta tensors with real ones (no double allocation)
-    # Note: Tensors in 'mapped' are already on the target device and dtype.
-    missing, unexpected = model.load_state_dict(mapped, strict=False, assign=True)
-
-    # 1. Re-tie weights if they were tied in config.
-    # Using assign=True breaks existing tying because it replaces Parameter objects.
+    # 5. Re-tie weights (Standard for Llama/Qwen)
     if config.tie_word_embeddings:
         model.lm_head.weight = model.embed_tokens.weight
 
@@ -111,15 +145,16 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
             
     model.to(device, dtype=dtype)
 
-    if missing:
-        # Filter out expected missing buffers (RoPE caches computed at runtime)
-        real_missing = [k for k in missing if "rotary_emb" not in k]
+    # Check for missing parameters (excluding RoPE buffers)
+    missing_keys = []
+    for name, param in model.named_parameters():
+        if param.is_meta:
+            missing_keys.append(name)
+    
+    if missing_keys:
+        real_missing = [k for k in missing_keys if "lm_head" not in k] # lm_head handled by re-tie
         if real_missing:
             print(f"Missing: {real_missing}")
-    if unexpected:
-        print(f"Unexpected: {unexpected}")
-
-    del mapped
 
     config.device = device
     model.eval()
