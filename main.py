@@ -6,7 +6,7 @@ from engine.generator import Generator
 from engine.sampler import Sampler
 
 # CONFIG
-THINKING = False
+HIDE_THINKING = True
 
 # MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 # MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
@@ -33,7 +33,7 @@ def main():
     full_output = gen.generate(prompt, max_new_tokens=32*1000)
     
     print(f"Prompt: {prompt}")
-    if THINKING==True:
+    if HIDE_THINKING==False:
         print(f"Output: {full_output}")
     else:
         print(strip_thinking(full_output))
