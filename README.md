@@ -41,6 +41,7 @@ uv sync
 
 ## Features and Branching
 
+- Benchmarking script added and model performance compared to LMstudio. Next step is to compare with vLLM.
 - Implemented **Quantisation** using `bitsandbytes` for 4-bit NF4 quantisation. Still experimenting so it has a seperate branch.
 - **RoPE Sharing** Optimised rotary embedding buffers to share vram across 32+ layers.
 

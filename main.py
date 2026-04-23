@@ -11,7 +11,7 @@ HIDE_THINKING = False
 
 # MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
 # MODEL_ID = "Qwen/Qwen3-0.6B"
-# MODEL_ID = "Qwen/Qwen3-1.7B"
+MODEL_ID = "Qwen/Qwen3-1.7B"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
