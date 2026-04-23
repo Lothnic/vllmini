@@ -3,7 +3,8 @@ import math
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, Attention as LlamaAttention, apply_rotary, RotaryEmbedding
+from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, RotaryEmbedding
+from models.attention import Attention as LlamaAttention, apply_rotary
 
 class QwenAttention(LlamaAttention):
     def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
