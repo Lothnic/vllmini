@@ -8,7 +8,7 @@ class Generator:
         self.tokenizer = tokenizer
         self.sampler = sampler or Sampler()
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate(self, prompt: str, max_new_tokens: int = 50) -> str:
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.model.config.device)
         past_key_values = None

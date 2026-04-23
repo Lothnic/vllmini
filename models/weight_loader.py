@@ -6,7 +6,15 @@ from models.llama import LlamaConfig, LlamaForCausalLM
 from models.qwen3 import QwenForCausalLM
 from huggingface_hub import hf_hub_download
 
-# MODEL CONFIG is now stated in the main file
+# REGISTRY
+
+MODEL_REGISTRY = {
+        "llama": LlamaForCausalLM,
+        "mistral": LlamaForCausalLM, # Logic is identical
+        "qwen2": QwenForCausalLM,    # Qwen2+ all use QK-norm
+        "qwen2_5": QwenForCausalLM,
+        "qwen3": QwenForCausalLM,
+    }
 
 def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16):
     print(f"Loading model {model_id} to {device} with dtype {dtype}")
@@ -33,12 +41,16 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     print(hf['architectures'][0])
 
+    model_type = hf.get("model_type", "llama")
+    if model_type not in MODEL_REGISTRY:
+        supported = ", ".join(MODEL_REGISTRY.keys())
+        raise ValueError(f"Model type '{model_type}' not supported. Supported types: {supported}")
+
+    model_class = MODEL_REGISTRY[model_type]
+
     # Initialize model on meta device (no actual memory allocation)
     with torch.device("meta"):
-        if hf['architectures'][0]=="Qwen3ForCausalLM":
-            model = QwenForCausalLM(config)
-        elif hf['architectures'][0]=="LlamaForCausalLM":
-            model = LlamaForCausalLM(config)
+        model = model_class(config)
 
     # Load weights directly to target device/dtype to avoid CPU copies
     try:
@@ -66,7 +78,39 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
     del state_dict
 
     # assign=True replaces meta tensors with real ones (no double allocation)
+    # Note: Tensors in 'mapped' are already on the target device and dtype.
     missing, unexpected = model.load_state_dict(mapped, strict=False, assign=True)
+
+    # 1. Re-tie weights if they were tied in config.
+    # Using assign=True breaks existing tying because it replaces Parameter objects.
+    if config.tie_word_embeddings:
+        model.lm_head.weight = model.embed_tokens.weight
+
+    # 2. Re-materialize RotaryEmbedding buffers on the target device.
+    # These are computed buffers (not saved in checkpoints) that remain as
+    # meta tensors after meta-device init + assign=True loading.
+    from models.llama import RotaryEmbedding
+    for module in model.modules():
+        if isinstance(module, RotaryEmbedding):
+            inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, config.head_dim, 2, device=device).float() / config.head_dim))
+            module.register_buffer("inv_freq", inv_freq, persistent=False)
+            t = torch.arange(config.max_position_embeddings, dtype=inv_freq.dtype, device=device)
+            freqs = torch.outer(t, inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            module.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+            module.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    # 3. Ensure all remaining tensors (e.g. missing params, other buffers) are on the correct device/dtype
+    # We use to_empty() for any remaining meta tensors, then to() for the rest.
+    for param in model.parameters():
+        if param.is_meta:
+            param.data = torch.empty_like(param, device=device)
+    for buffer in model.buffers():
+        if buffer.is_meta:
+            buffer.data = torch.empty_like(buffer, device=device)
+            
+    model.to(device, dtype=dtype)
+
     if missing:
         # Filter out expected missing buffers (RoPE caches computed at runtime)
         real_missing = [k for k in missing if "rotary_emb" not in k]
@@ -76,20 +120,6 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
         print(f"Unexpected: {unexpected}")
 
     del mapped
-
-    # Re-materialize RotaryEmbedding buffers on the target device.
-    # These are computed buffers (not saved in checkpoints) that remain as
-    # meta tensors after meta-device init + assign=True loading.
-    from models.llama import RotaryEmbedding
-    for module in model.modules():
-        if isinstance(module, RotaryEmbedding):
-            inv_freq = 1.0 / (config.rope_theta ** (torch.arange(0, config.head_dim, 2, device=device).float() / config.head_dim))
-            module.inv_freq = inv_freq
-            t = torch.arange(config.max_position_embeddings, dtype=inv_freq.dtype, device=device)
-            freqs = torch.outer(t, inv_freq)
-            emb = torch.cat((freqs, freqs), dim=-1)
-            module.cos_cached = emb.cos().to(dtype)
-            module.sin_cached = emb.sin().to(dtype)
 
     config.device = device
     model.eval()

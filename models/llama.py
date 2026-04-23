@@ -66,7 +66,7 @@ def apply_rotary(q, k, cos, sin):
 
 
 class Attention(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
         super().__init__()
         self.num_heads = config.num_attention_heads
         self.num_kv_heads = config.num_key_value_heads
@@ -78,7 +78,7 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
         self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
-        self.rotary_emb = RotaryEmbedding(config)
+        self.rotary_emb = rotary_emb
 
     def forward(self, hidden_states, past_kv=None, position_ids=None):
         bsz, q_len, _ = hidden_states.shape
@@ -126,10 +126,10 @@ class MLP(nn.Module):
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
         super().__init__()
         self.input_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.attn = Attention(config)
+        self.attn = Attention(config, rotary_emb)
         self.post_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.mlp = MLP(config)
 
@@ -150,7 +150,8 @@ class LlamaForCausalLM(CausalLM):
         super().__init__()
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_hidden_layers)])
+        self.rotary_emb = RotaryEmbedding(config)
+        self.layers = nn.ModuleList([TransformerBlock(config, self.rotary_emb) for _ in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tie_word_embeddings:

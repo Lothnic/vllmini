@@ -3,11 +3,11 @@ import math
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-from models.llama import LlamaConfig,MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, Attention as LlamaAttention, apply_rotary
+from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, Attention as LlamaAttention, apply_rotary, RotaryEmbedding
 
 class QwenAttention(LlamaAttention):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
+    def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
+        super().__init__(config, rotary_emb)
         self.q_norm = RMSNorm(config.head_dim, eps=config.rms_norm_eps)
         self.k_norm = RMSNorm(config.head_dim, eps=config.rms_norm_eps)
 
@@ -59,10 +59,10 @@ class QwenAttention(LlamaAttention):
         return out, present_kv
 
 class QwenTransformerBlock(TransformerBlock):
-    def __init__(self, config: LlamaConfig):
-        super().__init__(config)
+    def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
+        super().__init__(config, rotary_emb)
         self.input_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.attn = QwenAttention(config)
+        self.attn = QwenAttention(config, rotary_emb)
         self.post_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.mlp = MLP(config)
     
@@ -83,7 +83,7 @@ class QwenForCausalLM(LlamaForCausalLM):
         super().__init__(config)
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([QwenTransformerBlock(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList([QwenTransformerBlock(config, self.rotary_emb) for _ in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         if config.tie_word_embeddings:
