@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 from models.base import CausalLM
-from models.attention import Attention
+from models.attention import Attention, FlashAttention
 
 
 @dataclass
@@ -56,12 +56,6 @@ class RotaryEmbedding(nn.Module):
         sin = self.sin_cached[position_ids].unsqueeze(1)
         return cos.to(x.dtype), sin.to(x.dtype)
 
-
-
-
-
-
-
 class MLP(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
@@ -77,7 +71,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
         super().__init__()
         self.input_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
-        self.attn = Attention(config, rotary_emb)
+        self.attn = FlashAttention(config, rotary_emb)
         self.post_norm = RMSNorm(config.hidden_size, config.rms_norm_eps)
         self.mlp = MLP(config)
 

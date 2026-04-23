@@ -1,5 +1,6 @@
 """CLI entry point."""
 import torch
+import time
 from transformers import AutoTokenizer
 from models.weight_loader import load_hf_model
 from engine.generator import Generator
@@ -25,14 +26,16 @@ def strip_thinking(output: str) -> str:
 def main():
     model, config = load_hf_model(MODEL_ID, device=DEVICE)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    chat = [{"role": "user", "content": "Write a very long story about a robot."}]
+    chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
     # prompt = "Write a very long story about a robot."
-
+    start_time = time.time()
     gen = Generator(model, tokenizer, Sampler(temperature=0.7, top_p=0.9))
     full_output = gen.generate(prompt, max_new_tokens=2048)
-    
+    end_time = time.time()
+    print(f"Time taken: {end_time - start_time}")
+
     print(f"Prompt: {prompt}")
     if HIDE_THINKING==False:
         print(f"Output: {full_output}")
