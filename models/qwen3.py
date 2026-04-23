@@ -53,7 +53,7 @@ class QwenAttention(LlamaAttention):
         out = torch.matmul(attn, v)
         
         # 8. Output projection
-        out = out.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
+        out = out.transpose(1, 2).contiguous().view(bsz, q_len, self.num_heads * self.head_dim)
         out = self.o_proj(out)
         
         return out, present_kv

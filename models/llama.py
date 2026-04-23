@@ -109,7 +109,7 @@ class Attention(nn.Module):
 
         attn = F.softmax(attn, dim=-1, dtype=torch.float32).to(q.dtype)
         out = torch.matmul(attn, v)
-        out = out.transpose(1, 2).contiguous().view(bsz, q_len, self.hidden_size)
+        out = out.transpose(1, 2).contiguous().view(bsz, q_len, self.num_heads * self.head_dim)
         out = self.o_proj(out)
         return out, present_kv
 

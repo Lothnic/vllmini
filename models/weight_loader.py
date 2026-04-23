@@ -41,7 +41,6 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
             model = LlamaForCausalLM(config)
 
     # Load weights directly to target device/dtype to avoid CPU copies
-    print(f"Downloading/Loading weights for {model_id} (this may take a while for large models)...")
     try:
         weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors")
         state_dict = load_file(weights_path, device=device)
