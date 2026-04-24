@@ -43,6 +43,13 @@ uv sync
 
 - Benchmarking script added and model performance compared to LMstudio. Next step is to compare with vLLM.
 - Implemented **Quantisation** using `bitsandbytes` for 4-bit NF4 quantisation. Still experimenting so it has a seperate branch.
-- **RoPE Sharing** Optimised rotary embedding buffers to share vram across 32+ layers.
+- **RoPE Sharing** : Optimised rotary embedding buffers to share vram across 32+ layers.
 
+## Benchmarking
+
+- **Warmup**: we run one short generation first to "*warm up*" the GPU and JIT kernels (like SDPA - scaled_dot_product_attention ).
+- **Prefil Timing**: measuring how long it takes for the first token ID to be generated from the first `model.forward()` call.
+- **Decode Loop Timing**: Collect timestamps for every subsequent token to calculate the average Inter-Token Latency (ITL).
+- **Throughput**: it is just the total no of token / total gen time.
+- **VRAM Tracking**: using torch.cuda.max_memory_allocated() to find the peak VRAM usage.
 
