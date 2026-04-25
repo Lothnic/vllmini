@@ -53,5 +53,8 @@ class Sampler:
         if self.top_p < 1.0:
             logits = self.apply_top_p(logits, self.top_p)
 
-        probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        if self.temperature <= 0:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            probs = F.softmax(logits, dim=-1)
+            return torch.multinomial(probs, num_samples=1)
