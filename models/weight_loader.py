@@ -1,4 +1,3 @@
-from safetensors import torch
 import json
 import torch
 from safetensors.torch import load_file
