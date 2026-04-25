@@ -9,7 +9,7 @@ class Generator:
         self.sampler = sampler or Sampler()
 
     @torch.inference_mode()
-    def generate(self, prompt: str, max_new_tokens: int = 50) -> str:
+    def generate(self, prompt: str, max_new_tokens: int = 50):
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.model.config.device)
         past_key_values = None
 
@@ -24,5 +24,5 @@ class Generator:
 
             if next_token.item() == self.tokenizer.eos_token_id:
                 break
-
-        return self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+            
+            yield self.tokenizer.decode(next_token[0], skip_special_tokens=True)

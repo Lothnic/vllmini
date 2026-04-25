@@ -9,8 +9,8 @@ from engine.sampler import Sampler
 HIDE_THINKING = False
 
 # MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
-# MODEL_ID = "Qwen/Qwen3-0.6B"
-MODEL_ID = "Qwen/Qwen3-1.7B"
+MODEL_ID = "Qwen/Qwen3-0.6B"
+# MODEL_ID = "Qwen/Qwen3-1.7B"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -68,16 +68,15 @@ def main():
         messages.append({"role": "user", "content": user_input})
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         
-        full_output = gen.generate(prompt, max_new_tokens=2048)
-        
-        assistant_reply = full_output[len(prompt):].strip()
-        if HIDE_THINKING:
-            assistant_reply = strip_thinking(assistant_reply)
-            print(f"Assistant: {assistant_reply}")
-        else:
-            print(f"Assistant: {assistant_reply}")
-        messages.append({"role": "assistant", "content": assistant_reply})
+        parts = []
+        for token in gen.generate(prompt, max_new_tokens=2048):
+            print(token, end="", flush=True)
+            parts.append(token)
+        print()
+        full_output = "".join(parts)
 
+        assistant_reply = full_output[len(prompt):].strip()
+        messages.append({"role": "assistant", "content": assistant_reply})
 
 if __name__ == "__main__":
     main()
