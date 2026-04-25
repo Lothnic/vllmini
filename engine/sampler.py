@@ -11,6 +11,14 @@ import torch.nn.functional as F
 
 class Sampler:
     def __init__(self, temperature: float = 1.0, top_p: float = 1.0, top_k: int = 0):
+        
+        if temperature < 0:
+            raise ValueError(f"temperature must be >= 0, got {temperature}")
+        if not (0 < top_p <= 1):
+            raise ValueError(f"top_p must be in (0, 1], got {top_p}")
+        if top_k < 0:
+            raise ValueError(f"top_k must be >= 0, got {top_k}")
+
         self.temperature = temperature
         self.top_p = top_p
         self.top_k = top_k
