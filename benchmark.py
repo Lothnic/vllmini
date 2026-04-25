@@ -30,12 +30,15 @@ def benchmark():
     
     # Warmup
     model(input_ids[:, :5], position_ids=None)
-    torch.cuda.synchronize()
+    if DEVICE == "cuda":
+        torch.cuda.synchronize()
     
     # Reset memory stats
-    torch.cuda.reset_peak_memory_stats()
+    if DEVICE == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     gc.collect()
-    torch.cuda.empty_cache()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
 
     print("Running benchmark...")
     print_separator()
@@ -44,7 +47,8 @@ def benchmark():
     start_prefill = time.perf_counter()
     logits, past_key_values = model(input_ids, position_ids=None)
     next_token = sampler.sample(logits[:, -1, :])
-    torch.cuda.synchronize()
+    if DEVICE == 'cuda':
+        torch.cuda.synchronize()
     end_prefill = time.perf_counter()
     
     ttft = (end_prefill - start_prefill) * 1000 # ms
@@ -64,7 +68,8 @@ def benchmark():
             past_key_values=past_key_values
         )
         next_token = sampler.sample(logits[:, -1, :])
-        torch.cuda.synchronize()
+        if DEVICE=='cuda':
+            torch.cuda.synchronize()
         
         end_decode = time.perf_counter()
         decode_times.append(end_decode - start_decode)
@@ -79,7 +84,10 @@ def benchmark():
     avg_itl = (sum(decode_times) / len(decode_times)) * 1000 if decode_times else 0
     total_gen_time = end_prefill - start_prefill + sum(decode_times)
     tokens_per_sec = len(generated_tokens) / total_gen_time
-    peak_vram = torch.cuda.max_memory_allocated() / (1024 ** 3) # GB
+    if DEVICE=='cuda':
+        peak_vram = torch.cuda.max_memory_allocated() / (1024 ** 3) # GB
+    else:
+        peak_vram = 0
 
     print(f"Model ID: {MODEL_ID}")
     print(f"Tokens Generated: {len(generated_tokens)}")

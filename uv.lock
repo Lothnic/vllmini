@@ -927,6 +927,7 @@ name = "vllmini"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "huggingface-hub" },
     { name = "packaging" },
     { name = "safetensors" },
     { name = "torch" },
@@ -935,6 +936,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.11.0" },
     { name = "packaging", specifier = ">=26.1" },
     { name = "safetensors", specifier = ">=0.7.0" },
     { name = "torch", specifier = ">=2.11.0" },

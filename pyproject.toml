@@ -1,10 +1,11 @@
 [project]
 name = "vllmini"
 version = "0.1.0"
-description = "Add your description here"
+description = "A fast and efficient LLM inference engine."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "huggingface-hub>=1.11.0",
     "packaging>=26.1",
     "safetensors>=0.7.0",
     "torch>=2.11.0",
