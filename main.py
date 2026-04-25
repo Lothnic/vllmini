@@ -1,6 +1,5 @@
 """CLI entry point."""
 import torch
-import time
 from transformers import AutoTokenizer
 from models.weight_loader import load_hf_model
 from engine.generator import Generator
@@ -30,17 +29,55 @@ def main():
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
     # prompt = "Write a very long story about a robot."
-    start_time = time.time()
-    gen = Generator(model, tokenizer, Sampler(temperature=0.7, top_p=0.9))
-    full_output = gen.generate(prompt, max_new_tokens=2048)
-    end_time = time.time()
-    print(f"Time taken: {end_time - start_time}")
 
-    print(f"Prompt: {prompt}")
-    if HIDE_THINKING==False:
-        print(f"Output: {full_output}")
-    else:
-        print(strip_thinking(full_output))
+    sampler = Sampler(temperature=0.7, top_p=0.9)
+    gen = Generator(model, tokenizer, sampler)
+
+    messages = []
+
+    print(f"vLLMini Chat — Model: {MODEL_ID}")
+    print("Commands: /exit, /reset, /history")
+    print("-" * 40)
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except EOFError:
+            print("\nExiting...")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() == "/exit":
+            break
+
+        if user_input.lower() == "/reset":
+            messages = []
+            print("Chat reset.")
+            continue
+
+        if user_input.lower() == "/history":
+            if not messages:
+                print("No history.")
+            else:
+                for msg in messages:
+                    print(f"{msg['role']}: {msg['content']}")
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
+        full_output = gen.generate(prompt, max_new_tokens=2048)
+        
+        assistant_reply = full_output[len(prompt):].strip()
+        if HIDE_THINKING:
+            assistant_reply = strip_thinking(assistant_reply)
+            print(f"Assistant: {assistant_reply}")
+        else:
+            print(f"Assistant: {assistant_reply}")
+        messages.append({"role": "assistant", "content": assistant_reply})
+
 
 if __name__ == "__main__":
     main()
