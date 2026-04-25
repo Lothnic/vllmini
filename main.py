@@ -6,7 +6,7 @@ from engine.generator import Generator
 from engine.sampler import Sampler
 
 # CONFIG
-HIDE_THINKING = False
+HIDE_THINKING = True  # Set to True to hide thinking blocks and show only final response
 
 # MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
 MODEL_ID = "Qwen/Qwen3-0.6B"
@@ -69,13 +69,36 @@ def main():
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         
         parts = []
-        for token in gen.generate(prompt, max_new_tokens=2048):
-            print(token, end="", flush=True)
-            parts.append(token)
-        print()
-        full_output = "".join(parts)
+        buffer = ""           # accumulates raw text to detect tag boundaries
+        thinking_done = False # flips True once we see </think>
+        indicator_shown = False
 
-        assistant_reply = full_output[len(prompt):].strip()
+        for token in gen.generate(prompt, max_new_tokens=2048):
+            if HIDE_THINKING and not thinking_done:
+                # Accumulate until we find the </think> closing tag
+                buffer += token
+
+                # Show a one-time indicator when we see <think>
+                if not indicator_shown and "<think>" in buffer:
+                    print("Thinking... ", end="", flush=True)
+                    indicator_shown = True
+
+                # Check if the thinking block has ended
+                if "</think>" in buffer:
+                    thinking_done = True
+                    # Grab anything after </think> (model may emit response in same token)
+                    remainder = buffer.split("</think>", 1)[1]
+                    if remainder:
+                        print(remainder, end="", flush=True)
+                        parts.append(remainder)
+                # Otherwise keep accumulating silently
+            else:
+                # Either HIDE_THINKING is False, or we're past </think>
+                print(token, end="", flush=True)
+                parts.append(token)
+
+        print()
+        assistant_reply = "".join(parts).strip()
         messages.append({"role": "assistant", "content": assistant_reply})
 
 if __name__ == "__main__":
