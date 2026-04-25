@@ -27,6 +27,7 @@ def benchmark():
     
     print(f"Prompt length: {prompt_len} tokens")
     print("Starting warmup...")
+    
     # Warmup
     model(input_ids[:, :5], position_ids=None)
     torch.cuda.synchronize()
