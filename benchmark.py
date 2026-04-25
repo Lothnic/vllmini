@@ -104,7 +104,7 @@ def benchmark(model_id:str, prompt:str, device:str):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark vLLMini")
-    parser.add_argument("--model_id", type=str, default=MODEL_ID, help="Model ID")
+    parser.add_argument("--model-id", type=str, default=MODEL_ID, help="Model ID")
     parser.add_argument("--prompt", type=str, default=PROMPT, help="Prompt")
     parser.add_argument("--device", type=str, default=DEVICE, help="Device to use")
     
