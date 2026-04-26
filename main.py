@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 from models.weight_loader import load_hf_model
 from engine.generator import Generator
 from engine.sampler import Sampler
+from engine.sampling_params import SamplingParams
 
 # CONFIG DEFAULTS
 HIDE_THINKING = True
@@ -54,7 +55,8 @@ def main():
     
     # prompt = "Write a very long story about a robot."
 
-    sampler = Sampler(temperature=args.temperature, top_p=args.top_p)
+    params = SamplingParams(temperature=args.temperature, top_p=args.top_p)
+    sampler = Sampler()
     gen = Generator(model, tokenizer, sampler)
 
     messages = []
@@ -97,7 +99,7 @@ def main():
         thinking_done = False # flips True once we see </think>
         indicator_shown = False
 
-        for token in gen.generate(prompt, max_new_tokens=args.max_tokens):
+        for token in gen.generate(prompt, max_new_tokens=args.max_tokens, params=params):
             if args.hide_thinking and not thinking_done:
                 # Accumulate until we find the </think> closing tag
                 buffer += token
