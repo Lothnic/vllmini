@@ -1,19 +1,27 @@
 """CLI entry point."""
+import os
 import argparse
 import torch
+from huggingface_hub import try_to_load_from_cache
 from transformers import AutoTokenizer
+
 from models.weight_loader import load_hf_model
 from engine.generator import Generator
 from engine.sampler import Sampler
 
-# CONFIG
-HIDE_THINKING = True  # Set to True to hide thinking blocks and show only final response
-
-# MODEL_ID = "meta-llama/Llama-3.2-1B-Instruct"
+# CONFIG DEFAULTS
+HIDE_THINKING = True
 MODEL_ID = "Qwen/Qwen3-0.6B"
-# MODEL_ID = "Qwen/Qwen3-1.7B"
-
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Resolve local cache path if model is already downloaded
+# Passing a local dir path to AutoTokenizer prevents ALL network calls
+_cached = try_to_load_from_cache(MODEL_ID, "config.json")
+LOCAL_MODEL_PATH = os.path.dirname(_cached) if isinstance(_cached, str) else None
+
+if LOCAL_MODEL_PATH:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 
 def parse_args():
@@ -39,13 +47,8 @@ def main():
     
     model, config = load_hf_model(args.model_id, device=args.device)
     
-    # Try to load tokenizer, fall back to local files only if offline
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(args.model_id)
-    except Exception as e:
-        print(f"Failed to download tokenizer: {e}")
-        print("Retrying with local_files_only=True...")
-        tokenizer = AutoTokenizer.from_pretrained(args.model_id, local_files_only=True)
+    # Use local model path if available (from user's caching logic)
+    tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH or args.model_id)
     chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     

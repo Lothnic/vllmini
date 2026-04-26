@@ -1,4 +1,5 @@
 import json
+import os
 import torch
 from safetensors.torch import load_file
 from models.llama import LlamaConfig, LlamaForCausalLM
@@ -18,7 +19,8 @@ MODEL_REGISTRY = {
 def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16):
     print(f"Loading model {model_id} to {device} with dtype {dtype}")
 
-    config_path = hf_hub_download(repo_id=model_id, filename="config.json")
+    local_only = os.environ.get("HF_HUB_OFFLINE") == "1"
+    config_path = hf_hub_download(repo_id=model_id, filename="config.json", local_files_only=local_only)
 
     with open(config_path, "r") as f:
         hf = json.load(f)
@@ -53,15 +55,15 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     # Load weights directly to target device/dtype to avoid CPU copies
     try:
-        weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors")
+        weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors", local_files_only=local_only)
         state_dict = load_file(weights_path, device=device)
     except Exception:
-        index_path = hf_hub_download(repo_id = model_id, filename="model.safetensors.index.json")
+        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json", local_files_only=local_only)
         with open(index_path, "r") as f:
             index = json.load(f)
         state_dict = {}
         for shard in set(index["weight_map"].values()):
-            state_dict.update(load_file(hf_hub_download(repo_id=model_id, filename=shard), device=device))
+            state_dict.update(load_file(hf_hub_download(repo_id=model_id, filename=shard, local_files_only=local_only), device=device))
         
     # Map HF names -> our names
     mapped = {}
