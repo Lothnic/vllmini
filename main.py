@@ -24,7 +24,14 @@ def strip_thinking(output: str) -> str:
 
 def main():
     model, config = load_hf_model(MODEL_ID, device=DEVICE)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    
+    # Try to load tokenizer, fall back to local files only if offline
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    except Exception as e:
+        print(f"Failed to download tokenizer: {e}")
+        print("Retrying with local_files_only=True...")
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, local_files_only=True)
     chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
