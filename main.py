@@ -1,4 +1,5 @@
 """CLI entry point."""
+import argparse
 import torch
 from transformers import AutoTokenizer
 from models.weight_loader import load_hf_model
@@ -15,6 +16,17 @@ MODEL_ID = "Qwen/Qwen3-0.6B"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="vLLMini Chat")
+    parser.add_argument("--model-id", "-m", type=str, default=MODEL_ID, help="HuggingFace model ID")
+    parser.add_argument("--hide-thinking", "-t", action="store_true", default=HIDE_THINKING, help="Hide thinking blocks in output")
+    parser.add_argument("--device", "-d", type=str, default=DEVICE, help="Device to run on (cuda/cpu)")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Nucleus sampling threshold")
+    parser.add_argument("--max-tokens", type=int, default=2048, help="Maximum new tokens to generate")
+    return parser.parse_args()
+
+
 def strip_thinking(output: str) -> str:
     if '</think>' in output:
         striped_output = output.split("</think>")[-1].strip()
@@ -23,26 +35,28 @@ def strip_thinking(output: str) -> str:
         return output
 
 def main():
-    model, config = load_hf_model(MODEL_ID, device=DEVICE)
+    args = parse_args()
+    
+    model, config = load_hf_model(args.model_id, device=args.device)
     
     # Try to load tokenizer, fall back to local files only if offline
     try:
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+        tokenizer = AutoTokenizer.from_pretrained(args.model_id)
     except Exception as e:
         print(f"Failed to download tokenizer: {e}")
         print("Retrying with local_files_only=True...")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, local_files_only=True)
+        tokenizer = AutoTokenizer.from_pretrained(args.model_id, local_files_only=True)
     chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
     # prompt = "Write a very long story about a robot."
 
-    sampler = Sampler(temperature=0.7, top_p=0.9)
+    sampler = Sampler(temperature=args.temperature, top_p=args.top_p)
     gen = Generator(model, tokenizer, sampler)
 
     messages = []
 
-    print(f"vLLMini Chat — Model: {MODEL_ID}")
+    print(f"vLLMini Chat — Model: {args.model_id}")
     print("Commands: /exit, /reset, /history")
     print("-" * 40)
 
@@ -80,8 +94,8 @@ def main():
         thinking_done = False # flips True once we see </think>
         indicator_shown = False
 
-        for token in gen.generate(prompt, max_new_tokens=2048):
-            if HIDE_THINKING and not thinking_done:
+        for token in gen.generate(prompt, max_new_tokens=args.max_tokens):
+            if args.hide_thinking and not thinking_done:
                 # Accumulate until we find the </think> closing tag
                 buffer += token
 
