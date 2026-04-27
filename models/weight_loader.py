@@ -208,14 +208,31 @@ def load_hf_model(model_id: str, device: str = "cuda", dtype: torch.dtype = torc
     missing_params = [name for name, param in model.named_parameters() if param.is_meta]
     missing_buffers = [name for name, buf in model.named_buffers() if buf.is_meta]
 
+    # Special validation for lm_head: if lm_head is meta and tie_word_embeddings is False,
+    # this indicates a missing checkpoint weight that should not be silently initialized
+    for name in missing_params:
+        if "lm_head" in name:
+            if not config.tie_word_embeddings:
+                raise ValueError(
+                    f"Parameter '{name}' is missing from checkpoint and tie_word_embeddings is False. "
+                    "This would result in uninitialized memory. Please ensure the checkpoint contains "
+                    "the lm_head weights or set tie_word_embeddings=True in config."
+                )
+
     if missing_params or missing_buffers:
         raise ValueError(f"Missing weights/buffers in checkpoint! params={missing_params}, buffers={missing_buffers}")
 
     # 7. Ensure all remaining allowed meta tensors are materialized deterministically
-    for param in model.parameters():
+    # Use zeros instead of empty_like to avoid uninitialized memory
+    for name, param in model.named_parameters():
         if param.is_meta:
+            # Additional safety check for lm_head
+            if "lm_head" in name and not config.tie_word_embeddings:
+                raise ValueError(
+                    f"Cannot materialize '{name}': missing from checkpoint and tie_word_embeddings is False"
+                )
             param.data = torch.zeros_like(param, device=device)
-    for buffer in model.buffers():
+    for name, buffer in model.named_buffers():
         if buffer.is_meta:
             buffer.data = torch.zeros_like(buffer, device=device)
 

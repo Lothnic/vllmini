@@ -39,10 +39,15 @@ def strip_thinking(output: str) -> str:
 def main():
     args = parse_args()
 
-    # Don't force offline mode for model loading — the weight_loader
-    # handles local-first-then-download fallback on its own.
-    os.environ.pop("HF_HUB_OFFLINE", None)
-    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+    # Check if user has set offline mode environment variables
+    # If set, respect the user's offline setting and avoid forcing online downloads
+    if "HF_HUB_OFFLINE" in os.environ or "TRANSFORMERS_OFFLINE" in os.environ:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Offline mode detected (HF_HUB_OFFLINE or TRANSFORMERS_OFFLINE is set). "
+            "The process will respect your offline setting and avoid forcing online model downloads."
+        )
 
     model, config = load_hf_model(args.model_id, device=args.device, quantize=args.quantize)
 
