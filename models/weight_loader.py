@@ -6,7 +6,12 @@ import torch.nn as nn
 from safetensors.torch import load_file
 from models.llama import LlamaConfig, LlamaForCausalLM
 from models.qwen3 import QwenForCausalLM
+import logging
 from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # REGISTRY
 
@@ -49,7 +54,7 @@ def _find_shard_paths(model_id: str, local_only: bool) -> list[str]:
         """Try local first, then online if allowed."""
         try:
             return hf_hub_download(repo_id=model_id, filename=filename, local_files_only=True)
-        except Exception:
+        except EntryNotFoundError:
             if must_be_local:
                 raise
             return hf_hub_download(repo_id=model_id, filename=filename, local_files_only=False)
@@ -57,8 +62,12 @@ def _find_shard_paths(model_id: str, local_only: bool) -> list[str]:
     # 1. Try single-file model
     try:
         return [_download("model.safetensors", must_be_local=local_only)]
-    except Exception:
+    except EntryNotFoundError:
+        # Expected if model is sharded
         pass
+    except Exception as e:
+        logger.error(f"Error checking for single-file model: {e}")
+        raise
 
     # 2. Multi-shard model — get the index first, then each shard
     index_path = _download("model.safetensors.index.json", must_be_local=local_only)
