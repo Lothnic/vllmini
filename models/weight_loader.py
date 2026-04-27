@@ -39,16 +39,33 @@ def _resolve_parameter(model: nn.Module, key: str):
 
 
 def _find_shard_paths(model_id: str, local_only: bool) -> list[str]:
-    """Return list of safetensors shard paths (single file or multi-shard)."""
+    """Return list of safetensors shard paths (single file or multi-shard).
+
+    Tries local cache first.  If the file isn't cached *and* ``local_only``
+    is ``False``, transparently falls back to downloading from the Hub.
+    """
+
+    def _download(filename: str, *, must_be_local: bool) -> str:
+        """Try local first, then online if allowed."""
+        try:
+            return hf_hub_download(repo_id=model_id, filename=filename, local_files_only=True)
+        except Exception:
+            if must_be_local:
+                raise
+            return hf_hub_download(repo_id=model_id, filename=filename, local_files_only=False)
+
+    # 1. Try single-file model
     try:
-        path = hf_hub_download(repo_id=model_id, filename="model.safetensors", local_files_only=local_only)
-        return [path]
+        return [_download("model.safetensors", must_be_local=local_only)]
     except Exception:
-        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json", local_files_only=local_only)
-        with open(index_path, "r") as f:
-            index = json.load(f)
-        shard_files = set(index["weight_map"].values())
-        return [hf_hub_download(repo_id=model_id, filename=f, local_files_only=local_only) for f in shard_files]
+        pass
+
+    # 2. Multi-shard model — get the index first, then each shard
+    index_path = _download("model.safetensors.index.json", must_be_local=local_only)
+    with open(index_path, "r") as f:
+        index = json.load(f)
+    shard_files = sorted(set(index["weight_map"].values()))
+    return [_download(f, must_be_local=local_only) for f in shard_files]
 
 
 def _load_standard(model, shard_paths, device, dtype):
@@ -73,16 +90,20 @@ def _load_quantized(model, shard_paths, device, dtype):
     for path in shard_paths:
         shard = load_file(path, device="cpu")  # Always load to CPU first
 
-        for k, v in shard.items():
+        keys = list(shard.keys())
+        for k in keys:
+            v = shard.pop(k)  # Pop to free memory as we iterate
             new_k = _remap_key(k)
 
             try:
                 target, attr_name = _resolve_parameter(model, new_k)
                 param = getattr(target, attr_name)
             except AttributeError:
+                del v
                 continue  # Skip unmapped keys (e.g. keys we don't use)
 
             v_typed = v.to(dtype=dtype)
+            del v  # Free original tensor immediately
 
             if hasattr(param, "quant_type"):
                 # This is a Linear4bit parameter — quantize and place on device
@@ -90,7 +111,9 @@ def _load_quantized(model, shard_paths, device, dtype):
                     v_typed,
                     requires_grad=False,
                     quant_type=getattr(param, "quant_type", "nf4"),
-                ).to(device)
+                )
+                del v_typed  # Free CPU copy before GPU allocation
+                new_param = new_param.to(device)
                 setattr(target, attr_name, new_param)
             else:
                 # Normal parameter (embeddings, norms, lm_head, etc.)
@@ -98,6 +121,7 @@ def _load_quantized(model, shard_paths, device, dtype):
                     attr_name,
                     nn.Parameter(v_typed.to(device), requires_grad=False),
                 )
+                del v_typed
 
         del shard
         gc.collect()

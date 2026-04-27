@@ -1,8 +1,9 @@
 """CLI entry point."""
 import os
+import warnings
+warnings.filterwarnings("ignore", message=".*_check_is_size.*", category=FutureWarning)
 import argparse
 import torch
-from huggingface_hub import try_to_load_from_cache
 from transformers import AutoTokenizer
 
 from models.weight_loader import load_hf_model
@@ -38,27 +39,18 @@ def strip_thinking(output: str) -> str:
 def main():
     args = parse_args()
 
-    # Resolve local cache path for the actual requested model
-    # If cached, enable offline mode to prevent any network calls
-    _cached = try_to_load_from_cache(args.model_id, "config.json")
-    local_model_path = os.path.dirname(_cached) if isinstance(_cached, str) else None
-
-    if local_model_path:
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    else:
-        # Ensure offline mode is NOT set if the model isn't cached
-        os.environ.pop("HF_HUB_OFFLINE", None)
-        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+    # Don't force offline mode for model loading — the weight_loader
+    # handles local-first-then-download fallback on its own.
+    os.environ.pop("HF_HUB_OFFLINE", None)
+    os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
     model, config = load_hf_model(args.model_id, device=args.device, quantize=args.quantize)
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model_id)
+    # chat = [{"role": "user", "content": "Write a short story about a robot."}]
+    # prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
-    # Use local model path if available (prevents network calls for tokenizer)
-    tokenizer = AutoTokenizer.from_pretrained(local_model_path or args.model_id)
-    chat = [{"role": "user", "content": "Write a short story about a robot."}]
-    prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
-    
-    # prompt = "Write a very long story about a robot."
+    prompt = "Write a very long story about a robot."
 
     params = SamplingParams(temperature=args.temperature, top_p=args.top_p)
     sampler = Sampler()
@@ -122,6 +114,11 @@ def main():
                     if remainder:
                         print(remainder, end="", flush=True)
                         parts.append(remainder)
+                elif not indicator_shown and len(buffer) > 20:
+                    # Model doesn't use <think> tags — flush buffer and stream normally
+                    thinking_done = True
+                    print(buffer, end="", flush=True)
+                    parts.append(buffer)
                 # Otherwise keep accumulating silently
             else:
                 # Either HIDE_THINKING is False, or we're past </think>
