@@ -17,9 +17,9 @@ def print_separator():
     print("-" * 50)
 
 @torch.inference_mode()
-def benchmark(model_id:str, prompt:str, device:str):
-    print(f"Loading model {model_id} to {device}...")
-    model, config = load_hf_model(model_id, device=device)
+def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
+    print(f"Loading model {model_id} to {device} (quantize={quantize})...")
+    model, config = load_hf_model(model_id, device=device, quantize=quantize)
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     sampler = Sampler(temperature=0.0) # Greedy for consistency
 
@@ -107,9 +107,10 @@ def parse_args():
     parser.add_argument("--model-id", type=str, default=MODEL_ID, help="Model ID")
     parser.add_argument("--prompt", type=str, default=PROMPT, help="Prompt")
     parser.add_argument("--device", type=str, default=DEVICE, help="Device to use")
+    parser.add_argument("--quantize", "-q", action="store_true", help="Enable 4-bit NF4 quantization")
     
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
-    benchmark(args.model_id, args.prompt, args.device)
+    benchmark(args.model_id, args.prompt, args.device, args.quantize)

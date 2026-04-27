@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, RotaryEmbedding
-from models.attention import Attention as LlamaAttention, FlashAttention as LlamaFlashAttention, apply_rotary
+from models.attention import FlashAttention as LlamaFlashAttention, apply_rotary
 
 class QwenAttention(LlamaFlashAttention):
     def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
