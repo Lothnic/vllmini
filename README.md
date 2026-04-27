@@ -34,11 +34,12 @@ uv sync
 
 ```
 vllmini/
-├── main.py                  # CLI chat loop (multi-turn, streaming)
+├── main.py                  # CLI chat loop (multi-turn, streaming, argparse)
 ├── benchmark.py             # Perf harness (TTFT, ITL, tok/s, VRAM)
 ├── engine/
 │   ├── generator.py         # Single-seq generation loop (yield-based)
-│   └── sampler.py           # Temperature, top-k, top-p, greedy
+│   ├── sampler.py           # Stateless sampler (temperature, top-k, top-p, greedy)
+│   └── sampling_params.py   # SamplingParams dataclass — per-request sampling config
 ├── models/
 │   ├── base.py              # CausalLM ABC (forward interface)
 │   ├── attention.py         # Attention + FlashAttention + RoPE utils
@@ -47,11 +48,12 @@ vllmini/
 │   └── weight_loader.py     # HF download, config parse, meta-init, weight mapping, model registry
 ├── tests/
 │   ├── conftest.py
-│   └── test_sampler.py      # 9 unit tests
-├── docs/sampler.md           # Internal docs
-├── future_plans/             # This file
-├── archive/main.py           # Old non-streaming main
-└── .github/workflows/ci.yml  # CI (pytest + smoke)
+│   ├── test_sampler.py      # 17 unit tests (SamplingParams validation + stateless Sampler)
+│   └── test_main.py         # 22 unit tests (strip_thinking, parse_args, chat loop commands)
+├── docs/
+│   └── sampler.md           # Sampler internals + SamplingParams design rationale
+├── archive/main.py          # Old non-streaming main
+└── .github/workflows/ci.yml # CI (pytest + smoke)
 ```
 
 ## Interesting Things I learnt while building this (will be adding more to this list) 
@@ -62,6 +64,8 @@ vllmini/
 - we can initalise the model on a **meta device** and then load the weights directly to the target device/dtype to avoid cpu copies. still don't understand this but this prevented OOM due to double loading on cpu and gpu.
 - the model architecture don't differ that much from llama to qwen to mistral. they all use the same basic building blocks just with some tweaks here and there. but still have more model to check out and integrate.
 - for streaming ouput i am now using `yield` instead of `return` in the generation loop. this turns `generate()` into a **Python generator** — it lazily produces one token at a time and suspends between each one. the caller just does `for token in gen.generate(...)` and gets real-time streaming for free, no buffering the entire response in memory. this is what is used in the production LLM servers for SSE (Server-Sent Events) streaming over HTTP.
+- the **sampler** is now **stateless** and the **sampling params** are passed as a **dataclass** to the sampler. this is done to support **continuous batching** which i intend to implement in the future (hopefully).
+- **SDPA** or flashattention-2 is a game changer. it is a drop in replacement for **scaled_dot_product_attention** and it is much faster and more memory efficient. 
 
 ## Features and Branching
 
