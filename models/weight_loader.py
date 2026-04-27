@@ -208,17 +208,16 @@ def load_hf_model(model_id: str, device: str = "cuda", dtype: torch.dtype = torc
     missing_params = [name for name, param in model.named_parameters() if param.is_meta]
     missing_buffers = [name for name, buf in model.named_buffers() if buf.is_meta]
 
-    real_missing = [k for k in missing_params if "lm_head" not in k]
-    if real_missing or missing_buffers:
-        raise ValueError(f"Missing weights/buffers in checkpoint! params={real_missing}, buffers={missing_buffers}")
+    if missing_params or missing_buffers:
+        raise ValueError(f"Missing weights/buffers in checkpoint! params={missing_params}, buffers={missing_buffers}")
 
-    # 7. Ensure all remaining allowed meta tensors (e.g. lm_head) are materialized
+    # 7. Ensure all remaining allowed meta tensors are materialized deterministically
     for param in model.parameters():
         if param.is_meta:
-            param.data = torch.empty_like(param, device=device)
+            param.data = torch.zeros_like(param, device=device)
     for buffer in model.buffers():
         if buffer.is_meta:
-            buffer.data = torch.empty_like(buffer, device=device)
+            buffer.data = torch.zeros_like(buffer, device=device)
 
     # 8. Move model to target device/dtype
     # Note: for quantized models, bnb parameters handle their own dtype,
