@@ -15,15 +15,6 @@ HIDE_THINKING = True
 MODEL_ID = "Qwen/Qwen3-0.6B"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Resolve local cache path if model is already downloaded
-# Passing a local dir path to AutoTokenizer prevents ALL network calls
-_cached = try_to_load_from_cache(MODEL_ID, "config.json")
-LOCAL_MODEL_PATH = os.path.dirname(_cached) if isinstance(_cached, str) else None
-
-if LOCAL_MODEL_PATH:
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="vLLMini Chat")
@@ -33,6 +24,7 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--top-p", type=float, default=0.9, help="Nucleus sampling threshold")
     parser.add_argument("--max-tokens", type=int, default=2048, help="Maximum new tokens to generate")
+    parser.add_argument("--quantize", "-q", action="store_true", default=False, help="Enable 4-bit NF4 quantization (requires bitsandbytes)")
     return parser.parse_args()
 
 
@@ -45,11 +37,24 @@ def strip_thinking(output: str) -> str:
 
 def main():
     args = parse_args()
+
+    # Resolve local cache path for the actual requested model
+    # If cached, enable offline mode to prevent any network calls
+    _cached = try_to_load_from_cache(args.model_id, "config.json")
+    local_model_path = os.path.dirname(_cached) if isinstance(_cached, str) else None
+
+    if local_model_path:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    else:
+        # Ensure offline mode is NOT set if the model isn't cached
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+
+    model, config = load_hf_model(args.model_id, device=args.device, quantize=args.quantize)
     
-    model, config = load_hf_model(args.model_id, device=args.device)
-    
-    # Use local model path if available (from user's caching logic)
-    tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH or args.model_id)
+    # Use local model path if available (prevents network calls for tokenizer)
+    tokenizer = AutoTokenizer.from_pretrained(local_model_path or args.model_id)
     chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     

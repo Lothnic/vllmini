@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from models.base import CausalLM
+from models.base import CausalLM, get_linear_layer
 from models.attention import Attention, FlashAttention
 
 
@@ -24,6 +24,7 @@ class LlamaConfig:
     head_dim: int | None = None
     dtype: torch.dtype = torch.bfloat16
     device: str = "cuda"
+    quantize: bool = False
     
     def __post_init__(self):
         if self.head_dim is None:
@@ -59,9 +60,9 @@ class RotaryEmbedding(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+        self.gate_proj = get_linear_layer(config.hidden_size, config.intermediate_size, bias=False, quantize=config.quantize)
+        self.up_proj = get_linear_layer(config.hidden_size, config.intermediate_size, bias=False, quantize=config.quantize)
+        self.down_proj = get_linear_layer(config.intermediate_size, config.hidden_size, bias=False, quantize=config.quantize)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))

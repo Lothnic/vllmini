@@ -1,6 +1,8 @@
 import json
 import os
+import gc
 import torch
+import torch.nn as nn
 from safetensors.torch import load_file
 from models.llama import LlamaConfig, LlamaForCausalLM
 from models.qwen3 import QwenForCausalLM
@@ -16,8 +18,95 @@ MODEL_REGISTRY = {
         "qwen3": QwenForCausalLM,
     }
 
-def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16):
-    print(f"Loading model {model_id} to {device} with dtype {dtype}")
+
+def _remap_key(k: str) -> str:
+    """Map HuggingFace weight names -> our names."""
+    if k.startswith("model."):
+        k = k[6:]
+    k = k.replace("self_attn.", "attn.")
+    k = k.replace("input_layernorm", "input_norm")
+    k = k.replace("post_attention_layernorm", "post_norm")
+    return k
+
+
+def _resolve_parameter(model: nn.Module, key: str):
+    """Walk dot-separated key to find (parent_module, attr_name)."""
+    parts = key.split(".")
+    target = model
+    for part in parts[:-1]:
+        target = getattr(target, part)
+    return target, parts[-1]
+
+
+def _find_shard_paths(model_id: str, local_only: bool) -> list[str]:
+    """Return list of safetensors shard paths (single file or multi-shard)."""
+    try:
+        path = hf_hub_download(repo_id=model_id, filename="model.safetensors", local_files_only=local_only)
+        return [path]
+    except Exception:
+        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json", local_files_only=local_only)
+        with open(index_path, "r") as f:
+            index = json.load(f)
+        shard_files = set(index["weight_map"].values())
+        return [hf_hub_download(repo_id=model_id, filename=f, local_files_only=local_only) for f in shard_files]
+
+
+def _load_standard(model, shard_paths, device, dtype):
+    """Fast path: load all weights at once via load_state_dict(assign=True)."""
+    state_dict = {}
+    for path in shard_paths:
+        state_dict.update(load_file(path, device=device))
+
+    mapped = {_remap_key(k): v.to(dtype) for k, v in state_dict.items()}
+    del state_dict
+
+    missing, unexpected = model.load_state_dict(mapped, strict=False, assign=True)
+    del mapped
+
+    return missing, unexpected
+
+
+def _load_quantized(model, shard_paths, device, dtype):
+    """Quantized path: load shard-by-shard, quantize per-parameter via Params4bit."""
+    from bitsandbytes.nn import Params4bit
+
+    for path in shard_paths:
+        shard = load_file(path, device="cpu")  # Always load to CPU first
+
+        for k, v in shard.items():
+            new_k = _remap_key(k)
+
+            try:
+                target, attr_name = _resolve_parameter(model, new_k)
+                param = getattr(target, attr_name)
+            except AttributeError:
+                continue  # Skip unmapped keys (e.g. keys we don't use)
+
+            v_typed = v.to(dtype=dtype)
+
+            if hasattr(param, "quant_type"):
+                # This is a Linear4bit parameter — quantize and place on device
+                new_param = Params4bit(
+                    v_typed,
+                    requires_grad=False,
+                    quant_type=getattr(param, "quant_type", "nf4"),
+                ).to(device)
+                setattr(target, attr_name, new_param)
+            else:
+                # Normal parameter (embeddings, norms, lm_head, etc.)
+                target.register_parameter(
+                    attr_name,
+                    nn.Parameter(v_typed.to(device), requires_grad=False),
+                )
+
+        del shard
+        gc.collect()
+        if device != "cpu" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def load_hf_model(model_id: str, device: str = "cuda", dtype: torch.dtype = torch.bfloat16, quantize: bool = False):
+    print(f"Loading model {model_id} to {device} with dtype {dtype} (quantize={quantize})")
 
     local_only = os.environ.get("HF_HUB_OFFLINE") == "1"
     config_path = hf_hub_download(repo_id=model_id, filename="config.json", local_files_only=local_only)
@@ -38,6 +127,7 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
         attention_bias=hf.get("attention_bias", False),
         tie_word_embeddings=hf.get("tie_word_embeddings", False),
         head_dim=hf.get("head_dim"),
+        quantize=quantize,
     )
 
     print(hf['architectures'][0])
@@ -49,45 +139,25 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     model_class = MODEL_REGISTRY[model_type]
 
-    # Initialize model on meta device (no actual memory allocation)
+    # 1. Initialize model on meta device (no actual memory allocation)
     with torch.device("meta"):
         model = model_class(config)
 
-    # Load weights directly to target device/dtype to avoid CPU copies
-    try:
-        weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors", local_files_only=local_only)
-        state_dict = load_file(weights_path, device=device)
-    except Exception:
-        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json", local_files_only=local_only)
-        with open(index_path, "r") as f:
-            index = json.load(f)
-        state_dict = {}
-        for shard in set(index["weight_map"].values()):
-            state_dict.update(load_file(hf_hub_download(repo_id=model_id, filename=shard, local_files_only=local_only), device=device))
-        
-    # Map HF names -> our names
-    mapped = {}
-    for k,v in state_dict.items():
-        new_k = k
-        if new_k.startswith("model."):
-            new_k = new_k[6:]
-        new_k = new_k.replace("self_attn.", "attn.")
-        new_k = new_k.replace("input_layernorm", "input_norm")
-        new_k = new_k.replace("post_attention_layernorm", "post_norm")
-        mapped[new_k] = v.to(dtype)
+    # 2. Find shard files
+    shard_paths = _find_shard_paths(model_id, local_only)
 
-    del state_dict
+    # 3. Load weights — dual path strategy
+    if quantize:
+        _load_quantized(model, shard_paths, device, dtype)
+    else:
+        _load_standard(model, shard_paths, device, dtype)
 
-    # assign=True replaces meta tensors with real ones (no double allocation)
-    # Note: Tensors in 'mapped' are already on the target device and dtype.
-    missing, unexpected = model.load_state_dict(mapped, strict=False, assign=True)
-
-    # 1. Re-tie weights if they were tied in config.
-    # Using assign=True breaks existing tying because it replaces Parameter objects.
+    # 4. Re-tie weights if they were tied in config
+    # assign=True / per-param loading breaks existing tying because it replaces Parameter objects
     if config.tie_word_embeddings:
         model.lm_head.weight = model.embed_tokens.weight
 
-    # 2. Re-materialize RotaryEmbedding buffers on the target device.
+    # 5. Re-materialize RotaryEmbedding buffers on the target device.
     # These are computed buffers (not saved in checkpoints) that remain as
     # meta tensors after meta-device init + assign=True loading.
     from models.llama import RotaryEmbedding
@@ -101,30 +171,30 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
             module.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
             module.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    # 3. Ensure all remaining tensors (e.g. missing params, other buffers) are on the correct device/dtype
-    # We use to_empty() for any remaining meta tensors, then to() for the rest.
+    # 6. Ensure all remaining meta tensors are materialized on the correct device
     for param in model.parameters():
         if param.is_meta:
             param.data = torch.empty_like(param, device=device)
     for buffer in model.buffers():
         if buffer.is_meta:
             buffer.data = torch.empty_like(buffer, device=device)
-            
+
+    # 7. Move model to target device/dtype
+    # Note: for quantized models, bnb parameters handle their own dtype,
+    # model.to() will skip them automatically
     model.to(device, dtype=dtype)
 
-    if missing:
-        # Filter out expected missing buffers (RoPE caches computed at runtime)
-        real_missing = [k for k in missing if "rotary_emb" not in k]
+    # 8. Check for missing parameters
+    missing_keys = [name for name, param in model.named_parameters() if param.is_meta]
+    if missing_keys:
+        real_missing = [k for k in missing_keys if "lm_head" not in k]
         if real_missing:
             print(f"Missing: {real_missing}")
-    if unexpected:
-        print(f"Unexpected: {unexpected}")
-
-    del mapped
 
     config.device = device
     model.eval()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return model, config
 
 

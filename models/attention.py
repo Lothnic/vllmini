@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from models.base import get_linear_layer
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
     x1, x2 = x.chunk(2, dim=-1)
@@ -19,10 +20,10 @@ class Attention(nn.Module):
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.q_proj = get_linear_layer(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.k_proj = get_linear_layer(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.v_proj = get_linear_layer(self.hidden_size, self.num_kv_heads * self.head_dim, bias=config.attention_bias, quantize=config.quantize)
+        self.o_proj = get_linear_layer(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias, quantize=config.quantize)
         self.rotary_emb = rotary_emb
 
     def core_attention(self, q, k, v, q_len, kv_len):
