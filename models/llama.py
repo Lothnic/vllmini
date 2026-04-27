@@ -4,9 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from models.base import CausalLM
+from models.base import CausalLM, get_linear_layer
 from models.attention import Attention, FlashAttention
-
 
 @dataclass
 class LlamaConfig:
@@ -65,9 +64,6 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
 
 def apply_rotary(q, k, cos, sin):
     return (q * cos) + (rotate_half(q) * sin), (k * cos) + (rotate_half(k) * sin)
-
-
-
 
 class MLP(nn.Module):
     def __init__(self, config: LlamaConfig):
