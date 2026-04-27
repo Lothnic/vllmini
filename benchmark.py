@@ -5,10 +5,11 @@ import gc
 from transformers import AutoTokenizer
 from models.weight_loader import load_hf_model
 from engine.sampler import Sampler
+from engine.sampling_params import SamplingParams
 import argparse
 
 # CONFIG
-MODEL_ID = "Qwen/Qwen3-1.7B"
+MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
 PROMPT = "Explain the concept of backpropagation in deep learning in detail."
 MAX_NEW_TOKENS = 1024
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,7 +22,8 @@ def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
     print(f"Loading model {model_id} to {device} (quantize={quantize})...")
     model, config = load_hf_model(model_id, device=device, quantize=quantize)
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    sampler = Sampler(temperature=0.0) # Greedy for consistency
+    sampling_params = SamplingParams(temperature=0.0) # Greedy for consistency
+    sampler = Sampler()
 
     input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
     prompt_len = input_ids.shape[1]
@@ -47,7 +49,7 @@ def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
     # --- PREFILL ---
     start_prefill = time.perf_counter()
     logits, past_key_values = model(input_ids, position_ids=None)
-    next_token = sampler.sample(logits[:, -1, :])
+    next_token = sampler.sample(logits[:, -1, :], sampling_params)
     if device == 'cuda':
         torch.cuda.synchronize()
     end_prefill = time.perf_counter()
@@ -68,7 +70,7 @@ def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
             position_ids=None, 
             past_key_values=past_key_values
         )
-        next_token = sampler.sample(logits[:, -1, :])
+        next_token = sampler.sample(logits[:, -1, :], sampling_params)
         if device=='cuda':
             torch.cuda.synchronize()
         
@@ -104,7 +106,7 @@ def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark vLLMini")
-    parser.add_argument("--model-id", type=str, default=MODEL_ID, help="Model ID")
+    parser.add_argument("--model-id", "-m", type=str, default=MODEL_ID, help="Model ID")
     parser.add_argument("--prompt", type=str, default=PROMPT, help="Prompt")
     parser.add_argument("--device", type=str, default=DEVICE, help="Device to use")
     parser.add_argument("--quantize", "-q", action="store_true", help="Enable 4-bit NF4 quantization")
