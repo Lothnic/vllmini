@@ -1,5 +1,5 @@
-from safetensors import torch
 import json
+import os
 import torch
 import torch.nn as nn
 from safetensors.torch import load_file
@@ -21,7 +21,8 @@ MODEL_REGISTRY = {
 def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.bfloat16, quantize: bool = False):
     print(f"Loading model {model_id} to {device} with dtype {dtype} (quantize={quantize})")
 
-    config_path = hf_hub_download(repo_id=model_id, filename="config.json")
+    local_only = os.environ.get("HF_HUB_OFFLINE") == "1"
+    config_path = hf_hub_download(repo_id=model_id, filename="config.json", local_files_only=local_only)
 
     with open(config_path, "r") as f:
         hf = json.load(f)
@@ -57,70 +58,44 @@ def load_hf_model(model_id:str, device:str = "cuda", dtype:torch.dtype = torch.b
 
     # 2. Find shard files
     try:
-        # Check for single file
-        shard_paths = [hf_hub_download(repo_id=model_id, filename="model.safetensors")]
+        weights_path = hf_hub_download(repo_id=model_id, filename="model.safetensors", local_files_only=local_only)
+        state_dict = load_file(weights_path, device=device)
     except Exception:
-        # Multi-shard model
-        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json")
+        index_path = hf_hub_download(repo_id=model_id, filename="model.safetensors.index.json", local_files_only=local_only)
         with open(index_path, "r") as f:
             index = json.load(f)
-        shard_files = set(index["weight_map"].values())
-        shard_paths = [hf_hub_download(repo_id=model_id, filename=f) for f in shard_files]
-
-    # 3. Load shards one by one
-    for path in shard_paths:
-        shard = load_file(path, device="cpu")
-        for k, v in shard.items():
-            new_k = k
-            if new_k.startswith("model."):
-                new_k = new_k[6:]
-            new_k = new_k.replace("self_attn.", "attn.")
-            new_k = new_k.replace("input_layernorm", "input_norm")
-            new_k = new_k.replace("post_attention_layernorm", "post_norm")
-            
-            # Find the parameter in the model
-            try:
-                # Use recursive getattr to find the parameter
-                target = model
-                target_name = new_k
-                if "." in new_k:
-                    parts = new_k.split(".")
-                    for part in parts[:-1]:
-                        target = getattr(target, part)
-                    target_name = parts[-1]
-                
-                param = getattr(target, target_name)
-                
-                # Prepare weight on CPU
-                v_cpu = v.to(dtype=dtype)
-                
-                if hasattr(param, "quant_type"):
-                    # For bitsandbytes 4-bit parameters
-                    from bitsandbytes.nn import Params4bit
-                    new_param = Params4bit(
-                        v_cpu, 
-                        requires_grad=False, 
-                        quant_type=getattr(param, "quant_type", "nf4")
-                    ).to(device)
-                    setattr(target, target_name, new_param)
-                else:
-                    # For normal parameters
-                    target.register_parameter(target_name, nn.Parameter(v_cpu.to(device), requires_grad=False))
-                
-            except AttributeError:
-                # Might be a buffer or something we handle later (like lm_head tying)
-                pass
+        state_dict = {}
+        for shard in set(index["weight_map"].values()):
+            state_dict.update(load_file(hf_hub_download(repo_id=model_id, filename=shard, local_files_only=local_only), device=device))
         
         del shard
         gc.collect()
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
+    # 3. Map HF names -> our names
+    mapped = {}
+    for k, v in state_dict.items():
+        new_k = k
+        if new_k.startswith("model."):
+            new_k = new_k[6:]
+        new_k = new_k.replace("self_attn.", "attn.")
+        new_k = new_k.replace("input_layernorm", "input_norm")
+        new_k = new_k.replace("post_attention_layernorm", "post_norm")
+        mapped[new_k] = v.to(dtype)
+
+    del state_dict
+
+    # 4. Load weights into model
+    # assign=True replaces meta tensors with real ones
+    missing, unexpected = model.load_state_dict(mapped, strict=False, assign=True)
+    del mapped
+
     # 5. Re-tie weights (Standard for Llama/Qwen)
     if config.tie_word_embeddings:
         model.lm_head.weight = model.embed_tokens.weight
 
-    # 2. Re-materialize RotaryEmbedding buffers on the target device.
+    # 6. Re-materialize RotaryEmbedding buffers on the target device.
     # These are computed buffers (not saved in checkpoints) that remain as
     # meta tensors after meta-device init + assign=True loading.
     from models.llama import RotaryEmbedding

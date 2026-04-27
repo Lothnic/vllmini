@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from engine.sampling_params import SamplingParams
 
 # Basically just sampling which means taking logits and returning tokens
 # There are different sampling strategies:
@@ -10,10 +11,6 @@ import torch.nn.functional as F
 # 5. Nucleus sampling: sample from the smallest set of tokens whose cumulative probability exceeds p
 
 class Sampler:
-    def __init__(self, temperature: float = 1.0, top_p: float = 1.0, top_k: int = 0):
-        self.temperature = temperature
-        self.top_p = top_p
-        self.top_k = top_k
 
     def apply_temperature(self, logits: torch.Tensor, temperature: float) -> torch.Tensor:
         return logits / temperature
@@ -38,20 +35,23 @@ class Sampler:
         remove = torch.zeros_like(remove).scatter(-1, sorted_indices, remove)
         return logits.masked_fill(remove, float("-inf"))
 
-    def sample(self, logits: torch.Tensor) -> torch.Tensor:
+    def sample(self, logits: torch.Tensor, params: SamplingParams) -> torch.Tensor:
         """
         logits: (batch, vocab_size) — last token logits only
         Returns: (batch, 1) sampled token ids
         """
 
-        if self.temperature > 0:
-            logits = self.apply_temperature(logits, self.temperature)
+        if params.temperature > 0:
+            logits = self.apply_temperature(logits, params.temperature)
 
-        if self.top_k > 0:
-            logits = self.apply_top_k(logits, self.top_k)
+        if params.top_k > 0:
+            logits = self.apply_top_k(logits, params.top_k)
 
-        if self.top_p < 1.0:
-            logits = self.apply_top_p(logits, self.top_p)
+        if params.top_p < 1.0:
+            logits = self.apply_top_p(logits, params.top_p)
 
-        probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        if params.temperature <= 0:
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            probs = F.softmax(logits, dim=-1)
+            return torch.multinomial(probs, num_samples=1)

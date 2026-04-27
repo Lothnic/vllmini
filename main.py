@@ -1,17 +1,42 @@
 """CLI entry point."""
+import os
+import argparse
 import torch
+from huggingface_hub import try_to_load_from_cache
 from transformers import AutoTokenizer
+
 from models.weight_loader import load_hf_model
 from engine.generator import Generator
 from engine.sampler import Sampler
+from engine.sampling_params import SamplingParams
 
-# CONFIG
-HIDE_THINKING = False
-QUANTIZE = True
-
-MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
-
+# CONFIG DEFAULTS
+HIDE_THINKING = True
+QUANTIZE = False
+MODEL_ID = "Qwen/Qwen3-0.6B"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Resolve local cache path if model is already downloaded
+# Passing a local dir path to AutoTokenizer prevents ALL network calls
+_cached = try_to_load_from_cache(MODEL_ID, "config.json")
+LOCAL_MODEL_PATH = os.path.dirname(_cached) if isinstance(_cached, str) else None
+
+if LOCAL_MODEL_PATH:
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="vLLMini Chat")
+    parser.add_argument("--model-id", "-m", type=str, default=MODEL_ID, help="HuggingFace model ID")
+    parser.add_argument("--hide-thinking", "-t", action="store_true", default=HIDE_THINKING, help="Hide thinking blocks in output")
+    parser.add_argument("--quantize", "-q", action="store_true", default=QUANTIZE, help="Quantize linear layers to 4-bit")
+    parser.add_argument("--device", "-d", type=str, default=DEVICE, help="Device to run on (cuda/cpu)")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Nucleus sampling threshold")
+    parser.add_argument("--max-tokens", type=int, default=2048, help="Maximum new tokens to generate")
+    return parser.parse_args()
+
 
 def strip_thinking(output: str) -> str:
     if '</think>' in output:
@@ -21,21 +46,88 @@ def strip_thinking(output: str) -> str:
         return output
 
 def main():
-    model, config = load_hf_model(MODEL_ID, device=DEVICE, quantize=QUANTIZE)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    chat = [{"role": "user", "content": "Write a very long story about a robot."}]
+    args = parse_args()
+    
+    model, config = load_hf_model(args.model_id, device=args.device, quantize=args.quantize)
+    
+    # Use local model path if available (from user's caching logic)
+    tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH or args.model_id)
+    chat = [{"role": "user", "content": "Write a short story about a robot."}]
     prompt = tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
     
     # prompt = "Write a very long story about a robot."
 
-    gen = Generator(model, tokenizer, Sampler(temperature=0.7, top_p=0.9))
-    full_output = gen.generate(prompt, max_new_tokens=2048)
-    
-    print(f"Prompt: {prompt}")
-    if HIDE_THINKING==False:
-        print(f"Output: {full_output}")
-    else:
-        print(strip_thinking(full_output))
+    params = SamplingParams(temperature=args.temperature, top_p=args.top_p)
+    sampler = Sampler()
+    gen = Generator(model, tokenizer, sampler)
+
+    messages = []
+
+    print(f"vLLMini Chat — Model: {args.model_id}")
+    print("Commands: /exit, /reset, /history")
+    print("-" * 40)
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except EOFError:
+            print("\nExiting...")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input.lower() == "/exit":
+            break
+
+        if user_input.lower() == "/reset":
+            messages = []
+            print("Chat reset.")
+            continue
+
+        if user_input.lower() == "/history":
+            if not messages:
+                print("No history.")
+            else:
+                for msg in messages:
+                    print(f"{msg['role']}: {msg['content']}")
+            continue
+
+        messages.append({"role": "user", "content": user_input})
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
+        parts = []
+        buffer = ""           # accumulates raw text to detect tag boundaries
+        thinking_done = False # flips True once we see </think>
+        indicator_shown = False
+
+        for token in gen.generate(prompt, max_new_tokens=args.max_tokens, params=params):
+            if args.hide_thinking and not thinking_done:
+                # Accumulate until we find the </think> closing tag
+                buffer += token
+
+                # Show a one-time indicator when we see <think>
+                if not indicator_shown and "<think>" in buffer:
+                    print("Thinking... ", end="", flush=True)
+                    indicator_shown = True
+
+                # Check if the thinking block has ended
+                if "</think>" in buffer:
+                    thinking_done = True
+                    # Grab anything after </think> (model may emit response in same token)
+                    remainder = buffer.split("</think>", 1)[1]
+                    if remainder:
+                        print(remainder, end="", flush=True)
+                        parts.append(remainder)
+                # Otherwise keep accumulating silently
+            else:
+                # Either HIDE_THINKING is False, or we're past </think>
+                print(token, end="", flush=True)
+                parts.append(token)
+
+        print()
+        assistant_reply = "".join(parts).strip()
+        messages.append({"role": "assistant", "content": assistant_reply})
 
 if __name__ == "__main__":
     main()

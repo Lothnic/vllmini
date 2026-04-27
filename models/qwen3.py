@@ -3,9 +3,10 @@ import math
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, Attention as LlamaAttention, apply_rotary, RotaryEmbedding
+from models.llama import LlamaConfig, MLP, LlamaForCausalLM, TransformerBlock, RMSNorm, RotaryEmbedding
+from models.attention import Attention as LlamaAttention, FlashAttention as LlamaFlashAttention, apply_rotary
 
-class QwenAttention(LlamaAttention):
+class QwenAttention(LlamaFlashAttention):
     def __init__(self, config: LlamaConfig, rotary_emb: RotaryEmbedding):
         super().__init__(config, rotary_emb)
         self.q_norm = RMSNorm(config.head_dim, eps=config.rms_norm_eps)
@@ -43,14 +44,8 @@ class QwenAttention(LlamaAttention):
         k = k.repeat_interleave(self.num_kv_groups, dim=1)
         v = v.repeat_interleave(self.num_kv_groups, dim=1)
 
-        # 7. Scaled Dot-Product Attention
-        attn = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(self.head_dim)
-        if q_len > 1:
-            mask = torch.triu(torch.ones(q_len, kv_len, device=hidden_states.device, dtype=torch.bool), diagonal=1)
-            attn = attn.masked_fill(mask.unsqueeze(0).unsqueeze(0), float("-inf"))
-
-        attn = F.softmax(attn, dim=-1, dtype=torch.float32).to(q.dtype)
-        out = torch.matmul(attn, v)
+        # 7. Scaled Dot-Product Attention (Inherited from FlashAttention)
+        out = self.core_attention(q, k, v, q_len, kv_len)
         
         # 8. Output projection
         out = out.transpose(1, 2).contiguous().view(bsz, q_len, self.num_heads * self.head_dim)
