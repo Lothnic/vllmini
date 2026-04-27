@@ -70,7 +70,12 @@ vllmini/
 ## Features and Branching
 
 - Benchmarking script added and model performance compared to LMstudio. Next step is to compare with vLLM.
-- Implemented **Quantisation** using `bitsandbytes` for 4-bit NF4 quantisation. Still experimenting so it has a seperate branch.
+- Implemented **Quantization** using `bitsandbytes` for 4-bit NF4 quantisation.   ~~Still experimenting so it has a seperate branch~~ (it has been merged with main now).
+    - **Key insight**: 4-bit is a compressed encoding of the weights, we don't just truncate the weights to 4-bit (Turns out this is not correct, more on this later.) 
+    - **Dequantisation Formula**: 
+    $$ dequantized\ weight = codebook[4\ bit\ index] × scale + zero\ point $$
+    - **Basic idea**: so instead of storing weights as FP16/BF16 (2 bytes per parameter) or FP32 (4 bytes) which is full precision, we store each weight as a 4-bit index (0–15). This 4-bit value points to a specific float in a shared codebook (typically 16 values). So 16 weights share the same 16-entry codebook, meaning you need only 0.25 bytes per weight + 16 bytes per block for scale/zero-point. This reduces memory by ~8x vs FP16 and ~16x vs FP32.
+    
 - **RoPE Sharing** : Optimised rotary embedding buffers to share vram across 32+ layers.
 
 ## Benchmarking
