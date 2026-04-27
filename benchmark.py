@@ -62,26 +62,27 @@ def benchmark(model_id:str, prompt:str, device:str, quantize:bool):
     
     current_input_ids = next_token
     
-    for _ in range(MAX_NEW_TOKENS - 1):
-        start_decode = time.perf_counter()
-        
-        logits, past_key_values = model(
-            current_input_ids, 
-            position_ids=None, 
-            past_key_values=past_key_values
-        )
-        next_token = sampler.sample(logits[:, -1, :], sampling_params)
-        if device=='cuda':
-            torch.cuda.synchronize()
-        
-        end_decode = time.perf_counter()
-        decode_times.append(end_decode - start_decode)
-        
-        generated_tokens.append(next_token.item())
-        current_input_ids = next_token
-        
-        if next_token.item() == tokenizer.eos_token_id:
-            break
+    if next_token.item() != tokenizer.eos_token_id:
+        for _ in range(MAX_NEW_TOKENS - 1):
+            start_decode = time.perf_counter()
+            
+            logits, past_key_values = model(
+                current_input_ids, 
+                position_ids=None, 
+                past_key_values=past_key_values
+            )
+            next_token = sampler.sample(logits[:, -1, :], sampling_params)
+            if device=='cuda':
+                torch.cuda.synchronize()
+            
+            end_decode = time.perf_counter()
+            decode_times.append(end_decode - start_decode)
+            
+            generated_tokens.append(next_token.item())
+            current_input_ids = next_token
+            
+            if next_token.item() == tokenizer.eos_token_id:
+                break
 
     # --- STATS ---
     avg_itl = (sum(decode_times) / len(decode_times)) * 1000 if decode_times else 0
