@@ -12,7 +12,9 @@ class Generator:
     @torch.inference_mode()
     def generate(self, prompt: str, max_new_tokens: int = 50, params: SamplingParams | None = None):
         input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids.to(self.model.config.device)
+        prompt_len = input_ids.shape[1]
         past_key_values = None
+        prev_text = ""
 
         for _ in range(max_new_tokens):
             if past_key_values is None:
@@ -25,5 +27,11 @@ class Generator:
 
             if next_token.item() == self.tokenizer.eos_token_id:
                 break
-            
-            yield self.tokenizer.decode(next_token[0], skip_special_tokens=True)
+
+            # Decode all generated tokens so far and yield only the new text.
+            # This correctly handles SentencePiece space prefixes and multi-byte chars.
+            full_text = self.tokenizer.decode(input_ids[0, prompt_len:], skip_special_tokens=True)
+            new_text = full_text[len(prev_text):]
+            prev_text = full_text
+            if new_text:
+                yield new_text
