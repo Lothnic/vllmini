@@ -195,7 +195,15 @@ def load_hf_model(model_id: str, device: str = "cuda", dtype: torch.dtype = torc
             module.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
             module.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    # 6. Ensure all remaining meta tensors are materialized on the correct device
+    # 6. Check for missing parameters and buffers before materializing them
+    missing_params = [name for name, param in model.named_parameters() if param.is_meta]
+    missing_buffers = [name for name, buf in model.named_buffers() if buf.is_meta]
+
+    real_missing = [k for k in missing_params if "lm_head" not in k]
+    if real_missing or missing_buffers:
+        raise ValueError(f"Missing weights/buffers in checkpoint! params={real_missing}, buffers={missing_buffers}")
+
+    # 7. Ensure all remaining allowed meta tensors (e.g. lm_head) are materialized
     for param in model.parameters():
         if param.is_meta:
             param.data = torch.empty_like(param, device=device)
@@ -203,17 +211,10 @@ def load_hf_model(model_id: str, device: str = "cuda", dtype: torch.dtype = torc
         if buffer.is_meta:
             buffer.data = torch.empty_like(buffer, device=device)
 
-    # 7. Move model to target device/dtype
+    # 8. Move model to target device/dtype
     # Note: for quantized models, bnb parameters handle their own dtype,
     # model.to() will skip them automatically
     model.to(device, dtype=dtype)
-
-    # 8. Check for missing parameters
-    missing_keys = [name for name, param in model.named_parameters() if param.is_meta]
-    if missing_keys:
-        real_missing = [k for k in missing_keys if "lm_head" not in k]
-        if real_missing:
-            print(f"Missing: {real_missing}")
 
     config.device = device
     model.eval()
